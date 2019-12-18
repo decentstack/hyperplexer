@@ -1,0 +1,54 @@
+{
+  "name": "@decentstack/replication-manager",
+  "version": "0.0.1",
+  "description": "Fast and efficient replication-manager for hypercores",
+  "main": "index.js",
+  "files": [
+    "lib",
+    "bin",
+    "index.js"
+  ],
+  "scripts": {
+    "test": "tape test/*.js",
+    "debug": "node inspect $(npm bin)/tape test/",
+    "lint": "standard",
+    "prepublishOnly": "npm test"
+  },
+  "dependencies": {
+    "deferinfer": "^1.0.1",
+    "end-of-stream": "^1.4.4",
+    "exchange-protocol": "^4.0.0",
+    "hypercore-protocol": "^7.7.1",
+    "hypercore-substream": "^3.0.1",
+    "jsdoc": "^3.6.3",
+    "nanoqueue": "^1.0.0",
+    "pretty-hash": "^1.0.1",
+    "pump": "^3.0.0",
+    "xxhashjs": "^0.2.2"
+  },
+  "devDependencies": {
+    "hypercore": "^8.4.0",
+    "random-access-memory": "^3.1.1",
+    "standard": "^14.3.1",
+    "tape": "^4.11.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/telamon/@decentstack/replication-manager.git"
+  },
+  "keywords": [
+    "hypercore",
+    "replication",
+    "manager",
+    "multifeed"
+  ],
+  "author": {
+    "name": "Tony Ivanov",
+    "email": "telamohn@pm.me"
+  },
+  "license": "AGPL-3.0-or-later",
+  "bugs": {
+    "url": "https://github.com/telamon/@decentstack/replication-manager/issues"
+  },
+  "homepage": "https://github.com/telamon/@decentstack/replication-manager#readme"
+}
