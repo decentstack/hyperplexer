@@ -5,6 +5,7 @@
  */
 const assert = require('assert')
 const PeerConnection = require('./lib/peer-connection')
+const { defer } = require('deferinfer')
 const debug = require('debug')('@decentstack/replmgr')
 const {
   STATE_ACTIVE,
@@ -42,7 +43,7 @@ class ReplicationManager {
     this.handlers = {
       // Replication control
       // onshare: handlers.onshare || (() => true),
-      onaccept: handlers.onaccept || (() => true),
+      onaccept: handlers.onaccept || ((_, c) => c(true)),
       // Peer control
       onauthenticate: handlers.onauthenticate,
       onconnect: handlers.onconnect,
@@ -58,11 +59,12 @@ class ReplicationManager {
     }
     this.peers = []
     this._extensions = {}
+    this._resourceCache = {}
     this._onPeerStateChanged = this._onPeerStateChanged.bind(this)
     this._onManifestReceived = this._onManifestReceived.bind(this)
-    //this._onReplicateRequest = this._onReplicateRequest.bind(this)
-    //this._onFeedReplicated = this._onFeedReplicated.bind(this)
-    //this._onUnhandeledExtension = this._onUnhandeledExtension.bind(this)
+    this._onReplicateRequest = this._onReplicateRequest.bind(this)
+    // this._onFeedReplicated = this._onFeedReplicated.bind(this)
+    // this._onUnhandeledExtension = this._onUnhandeledExtension.bind(this)
   }
 
   /**
@@ -102,7 +104,8 @@ class ReplicationManager {
   share (peer, feeds, opts = {}) {
     const namespace = opts.namespace || 'default'
     const reqTime = (new Date()).getTime()
-    const cb = typeof opts.ondone === 'function' ? opts.ondone : (err, selectedFeeds) => {
+
+    const cb = (err, selectedFeeds) => {
       // Getting requests for all automatically sent manifests is not
       // mandatory in this stage, we're only using this callback for local statistics.
       if (err && err.type !== 'ManifestResponseTimedOutError') return peer.kill(err)
@@ -112,7 +115,9 @@ class ReplicationManager {
       } else {
         console.warn('Remote ignored our manifest')
       }
+      if (typeof opts.ondone === 'function') opts.ondone(err, selectedFeeds)
     }
+
     peer.sendManifest(namespace, feeds, cb)
   }
 
@@ -139,8 +144,57 @@ class ReplicationManager {
     return peer
   }
 
-  _onManifestReceived () {
-    debugger
+  _onManifestReceived (snapshot, accept, peer) {
+    let pending = snapshot.feeds.length
+    const selected = []
+    for (const feed of snapshot.feeds) {
+      this._isResourceAllowed(
+        snapshot.namespace,
+        feed.key,
+        feed.headers,
+        peer,
+        async accepted => {
+          if (accepted) selected.push(feed.key)
+          if (!--pending) {
+            accept(selected)
+            for (const key of selected) {
+              await this._startFeedReplicationByKey(snapshot.namespace, key, peer)
+            }
+          }
+        })
+    }
+  }
+
+  _isResourceAllowed (namespace, key, headers, peer, callback) {
+    // TODO: short-circuit through cache?
+    // if (this._whitelist[namespace][key]) callback(true)
+    this.handlers.onaccept({
+      key,
+      headers,
+      peer,
+      namespace
+    }, callback)
+  }
+
+  _startFeedReplicationByKey (namespace, key, peer) {
+    return this._resolveResource(namespace, key)
+      .then(feed => {
+        peer.replicateCore(feed)
+      })
+      .catch(this.handlers.onerror)
+  }
+
+  async _resolveResource (namespace, key) {
+    let feed = this._resourceCache[key.toString()]
+    if (feed) return feed
+
+    feed = await defer(done => this.handlers.onresolve({ namespace, key }, feed => {
+      done(null, feed)
+    }))
+
+    this._resourceCache[key.toString()] = feed
+    await defer(done => feed.ready(done))
+    return feed
   }
 
   _onPeerStateChanged (state, prevstate, err, peer) {
@@ -161,6 +215,18 @@ class ReplicationManager {
 
   _emit (ev, ...args) {
     if (typeof this.handlers[ev] === 'function') return this.handlers[ev](...args)
+  }
+
+  async _onReplicateRequest (req, peer) {
+    const { namespace, keys } = req
+    const offered = peer.exchangeExt.offeredKeys[namespace] || {}
+    // Maybe offered-filtering should be done in exchange-ext.
+    const replicate = keys
+      .filter(k => offered[k.toString('hex')])
+
+    for (const k of replicate) {
+      await this._startFeedReplicationByKey(namespace, k, peer)
+    }
   }
 }
 

@@ -5,12 +5,27 @@ const ram = require('random-access-memory')
 const { ReplicationManager, PeerConnection } = require('..')
 
 const arraySourceFactory = (ra, coreFn, count = 3) => {
-  const a = Array.from(new Array(count)).map(() => coreFn(ra))
+  const a = Array.from(new Array(count)).map((_, n) => coreFn(p => ra(n + p)))
+  a.ready = (cb, i = 0) => i < a.length ? a[i].ready(a.ready(cb, ++i)) : cb()
+  a.toManifest = cb => {
+    a.ready(() => {
+      cb(a.map(f => ({
+        key: f.key,
+        headers: { origin: 'dummy' }
+      })))
+    })
+  }
+  a.create = key => {
+    const l = a.length
+    const f = coreFn(p => ra(l + p))
+    a.push(f)
+    return f
+  }
   return a
 }
 
 test('basic replication', t => {
-  t.plan(12)
+  t.plan(24)
   const encryptionKey = Buffer.alloc(32)
   let imLast = false
   encryptionKey.write('foo bars')
@@ -20,7 +35,10 @@ test('basic replication', t => {
   const localStore = arraySourceFactory(ram, hypercore, 3)
   const stack = new ReplicationManager(encryptionKey, {
     onerror: t.error,
-    onconnect: conn => t.ok(conn, '"connection" event fired on local'),
+    onconnect: peer => {
+      localStore.toManifest(m => stack.share(peer, m))
+      t.ok(peer, '"connection" event fired on local')
+    },
     ondisconnect (err, conn) {
       t.error(err, 'Graceful disconnect')
       t.ok(conn, '"disconnect" event fired on local')
@@ -36,13 +54,21 @@ test('basic replication', t => {
     },
     onaccept ({ key, headers, peer, namespace }, accept) {
       t.equal(namespace, 'default')
+      t.ok(Buffer.isBuffer(key))
+      t.equal(headers.origin, 'dummy')
       debugger
+      accept(true)
     },
 
-    // Create flags if the core is new given this
-    // managers' context
+    // Create flag if the core is new given this
+    // managers' context. Please clarify, how is it new given the context?
+    // Disabling the create flag for now.
     onresolve ({ namespace, key, create }, resolve) {
-      debugger
+      t.equal(namespace, 'default')
+      t.equal(typeof create, 'undefined', 'disabled')
+      const feed = localStore.find(f => f.key.equals(key))
+      t.ok(feed)
+      resolve(feed)
     }
 
   })
@@ -59,17 +85,18 @@ test('basic replication', t => {
       if (imLast) finishUp()
       else imLast = 'local'
     },
-    onresolve ({ namespace, key, create }, resolve) {
-      debugger
-    },
-    onlistcores (namespace, cb) {
-      debugger
-      cb(null, localStore)
+
+    onresolve ({ namespace, key }, resolve) {
+      let feed = remoteStore.find(f => {
+        return f.key.equals(key)
+      })
+      if (!feed) feed = remoteStore.create(key)
+      t.ok(feed)
+      feed.ready(() => resolve(feed))
     }
   })
 
-
-  // Initialize a resverse stream
+  // Initialize a reverse stream
   const stream = remoteStack.replicate(true)
 
   // Preferred connection handler
