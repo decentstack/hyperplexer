@@ -1,11 +1,38 @@
 const test = require('tape')
 const hypercore = require('hypercore')
 const ram = require('random-access-memory')
-// const { defer } = require('deferinfer')
+const { defer } = require('deferinfer')
 const { ReplicationManager, PeerConnection } = require('..')
+const { randomBytes } = require('crypto')
+
+test('PeerConnection.replicateCore().then()', async t => {
+  t.plan(3)
+  try {
+    const feed1 = hypercore(ram)
+    await defer(d => feed1.ready(d))
+    const feed2 = hypercore(ram, feed1.key)
+
+    for (let i = 0; i < 3; i++) {
+      await defer(d => feed1.append(randomBytes(0xff), d))
+    }
+    const exKey = randomBytes(64)
+    const peer1 = new PeerConnection(true, exKey)
+    const peer2 = new PeerConnection(false, exKey)
+    peer1.stream
+      .pipe(peer2.stream)
+      .pipe(peer1.stream)
+      .once('error', t.error)
+      .once('end', t.pass.bind(null, 'pipe closed'))
+
+    peer1.replicateCore(feed1, err => t.error(err, 'Feed 1 replication finished successfully'))
+    await peer2.replicateCore(feed2)
+    t.pass('Feed 2 replication finished successfully')
+  } catch (e) { t.error(e) }
+})
 
 const arraySourceFactory = (ra, coreFn, count = 3) => {
-  const a = Array.from(new Array(count)).map((_, n) => coreFn(p => ra(n + p)))
+  const a = Array.from(new Array(count))
+    .map((_, n) => coreFn(p => ra(n + p)))
   a.ready = (cb, i = 0) => i < a.length ? a[i].ready(a.ready(cb, ++i)) : cb()
   a.toManifest = cb => {
     a.ready(() => {
@@ -24,7 +51,7 @@ const arraySourceFactory = (ra, coreFn, count = 3) => {
   return a
 }
 
-test('basic replication', t => {
+test.only('basic replication', t => {
   t.plan(24)
   const encryptionKey = Buffer.alloc(32)
   let imLast = false
@@ -53,9 +80,9 @@ test('basic replication', t => {
       return true
     },
     onaccept ({ key, headers, peer, namespace }, accept) {
-      t.equal(namespace, 'default')
-      t.ok(Buffer.isBuffer(key))
-      t.equal(headers.origin, 'dummy')
+      t.equal(namespace, 'default', 'Namespace default')
+      t.ok(Buffer.isBuffer(key), 'Key is buffer')
+      t.equal(headers.origin, 'dummy', 'Origin header set')
       debugger
       accept(true)
     },
@@ -108,6 +135,7 @@ test('basic replication', t => {
   // stream.pipe(stack.replicate()).pipe(stream)
 
   const finishUp = () => {
+    debugger
     t.equal(localStore.feeds.length, 4, 'All feeds available on local')
     t.equal(remoteStore.feeds.length, 4, 'All feeds available on remote')
     t.equal(connection.queue.remaining, 0)

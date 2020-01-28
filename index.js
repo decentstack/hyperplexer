@@ -40,6 +40,15 @@ class ReplicationManager {
   constructor (rpcChannelKey, handlers, opts) {
     this.opts = opts || {}
     this.rpcChannelKey = rpcChannelKey
+    /*
+    this.pendingReplications = new Map()
+    this.queue = new NanoQueue(opts.activeLimit || 50, {
+      process: this._processQueue.bind(this),
+      oncomplete: () => this.debug('ReplicationQueue flushed')
+    })
+    */
+
+
     this.handlers = {
       // Replication control
       // onshare: handlers.onshare || (() => true),
