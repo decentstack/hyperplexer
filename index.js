@@ -41,13 +41,11 @@ class ReplicationManager {
     this.opts = opts || {}
     this.rpcChannelKey = rpcChannelKey
     /*
-    this.pendingReplications = new Map()
     this.queue = new NanoQueue(opts.activeLimit || 50, {
       process: this._processQueue.bind(this),
       oncomplete: () => this.debug('ReplicationQueue flushed')
     })
     */
-
 
     this.handlers = {
       // Replication control
@@ -143,7 +141,7 @@ class ReplicationManager {
         onmanifest: this._onManifestReceived,
         onrequest: this._onReplicateRequest,
         onstatechange: this._onPeerStateChanged,
-        onreplicating: this._onFeedReplicated,
+        // onreplicating: (...args) => this._emit('onreplicating', peer, ...args),
         onextension: this._onUnhandeledExtension,
         onauthenticate: (...auth) => this._emit('onauthenticate', peer, ...auth)
       }
@@ -156,19 +154,24 @@ class ReplicationManager {
   _onManifestReceived (snapshot, accept, peer) {
     let pending = snapshot.feeds.length
     const selected = []
+
     for (const feed of snapshot.feeds) {
       this._isResourceAllowed(
         snapshot.namespace,
         feed.key,
         feed.headers,
         peer,
-        async accepted => {
+        accepted => {
           if (accepted) selected.push(feed.key)
           if (!--pending) {
             accept(selected)
-            for (const key of selected) {
-              await this._startFeedReplicationByKey(snapshot.namespace, key, peer)
-            }
+            this._mapFeeds(snapshot.namespace, selected)
+              .then(feeds => {
+                for (const key of feeds) {
+                  this._startFeedReplication(key, peer)
+                }
+              })
+              .catch(this.handlers.onerror)
           }
         })
     }
@@ -185,12 +188,24 @@ class ReplicationManager {
     }, callback)
   }
 
-  _startFeedReplicationByKey (namespace, key, peer) {
-    return this._resolveResource(namespace, key)
-      .then(feed => {
-        peer.replicateCore(feed)
+  _startFeedReplication (feed, peer) {
+    return peer.replicateCore(feed)
+      .then(r => {
+        // Replication done?
+        // debugger
       })
       .catch(this.handlers.onerror)
+  }
+
+
+  // Synchroneous feed mapper
+  async _mapFeeds (namespace, keys) {
+    const feeds = []
+    for (const key of keys) {
+      const f = await this._resolveResource(namespace, key)
+      feeds.push(f)
+    }
+    return feeds
   }
 
   async _resolveResource (namespace, key) {
@@ -203,6 +218,7 @@ class ReplicationManager {
 
     this._resourceCache[key.toString()] = feed
     await defer(done => feed.ready(done))
+    if (!key.equals(feed.key)) throw new Error(`Resolved key mismatch: ${key.toString('hex')} !== ${feed.key.toString('hex')}`)
     return feed
   }
 
@@ -226,16 +242,17 @@ class ReplicationManager {
     if (typeof this.handlers[ev] === 'function') return this.handlers[ev](...args)
   }
 
-  async _onReplicateRequest (req, peer) {
+  _onReplicateRequest (req, peer) {
     const { namespace, keys } = req
     const offered = peer.exchangeExt.offeredKeys[namespace] || {}
     // Maybe offered-filtering should be done in exchange-ext.
-    const replicate = keys
-      .filter(k => offered[k.toString('hex')])
-
-    for (const k of replicate) {
-      await this._startFeedReplicationByKey(namespace, k, peer)
-    }
+    this._mapFeeds(namespace, keys.filter(k => offered[k.toString('hex')]))
+      .then(feeds => {
+        for (const feed of feeds) {
+          this._startFeedReplication(feed, peer)
+        }
+      })
+      .catch(this.handlers.onerror)
   }
 }
 

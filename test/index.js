@@ -44,22 +44,28 @@ const arraySourceFactory = (ra, coreFn, count = 3) => {
   }
   a.create = key => {
     const l = a.length
-    const f = coreFn(p => ra(l + p))
+    const f = coreFn(p => ra(l + p), key)
     a.push(f)
     return f
   }
+  a.sumBlocks = () => a.reduce((s, f) => s + f.length, 0)
   return a
 }
 
-test.only('basic replication', t => {
-  t.plan(24)
-  const encryptionKey = Buffer.alloc(32)
+// Horrible out of control test that needs to be clarified.
+test.only('basic replication', async t => {
+  t.plan(32)
+  const encryptionKey = randomBytes(32)
   let imLast = false
-  encryptionKey.write('foo bars')
 
   // Register corestore as middleware
   // local has 3 feeds
   const localStore = arraySourceFactory(ram, hypercore, 3)
+  await defer(d => localStore.ready(d))
+  for (const feed of localStore) {
+    await defer(d => feed.append(randomBytes(512), d))
+  }
+
   const stack = new ReplicationManager(encryptionKey, {
     onerror: t.error,
     onconnect: peer => {
@@ -91,17 +97,20 @@ test.only('basic replication', t => {
     // managers' context. Please clarify, how is it new given the context?
     // Disabling the create flag for now.
     onresolve ({ namespace, key, create }, resolve) {
-      t.equal(namespace, 'default')
+      t.equal(namespace, 'default', 'Namespace is set')
       t.equal(typeof create, 'undefined', 'disabled')
       const feed = localStore.find(f => f.key.equals(key))
-      t.ok(feed)
+      t.ok(feed.key, 'Feed exists in localStore')
       resolve(feed)
     }
-
   })
 
-  // Remote has 1 feed
-  const remoteStore = arraySourceFactory(ram, hypercore, 1)
+  const remoteStore = arraySourceFactory(ram, hypercore, 0)
+  await defer(d => remoteStore.ready(d))
+  for (const feed of remoteStore) {
+    await defer(d => feed.append(randomBytes(512), d))
+  }
+
   const remoteStack = new ReplicationManager(encryptionKey, {
     onerror: t.error,
     onconnect: conn => t.ok(conn, '"connection" event fired on remote'),
@@ -118,7 +127,7 @@ test.only('basic replication', t => {
         return f.key.equals(key)
       })
       if (!feed) feed = remoteStore.create(key)
-      t.ok(feed)
+      t.ok(feed, 'feed found')
       feed.ready(() => resolve(feed))
     }
   })
@@ -129,15 +138,16 @@ test.only('basic replication', t => {
   // Preferred connection handler
   const connection = stack.handleConnection(false, { stream })
   // stream.pipe(connection.stream).pipe(stream)
-  t.ok(connection)
+  t.ok(connection instanceof PeerConnection, 'PeerConnection returned')
   // Also supported but not explored patterns includes:
   // stack.replicate({ stream })
   // stream.pipe(stack.replicate()).pipe(stream)
 
   const finishUp = () => {
+    t.equal(localStore.length, 3, 'All feeds available on local')
+    t.equal(remoteStore.length, 3, 'All feeds available on remote')
+    t.equal(remoteStore.sumBlocks(), localStore.sumBlocks(), 'All entries transfered')
     debugger
-    t.equal(localStore.feeds.length, 4, 'All feeds available on local')
-    t.equal(remoteStore.feeds.length, 4, 'All feeds available on remote')
     t.equal(connection.queue.remaining, 0)
     stack.close(t.end)
   }
