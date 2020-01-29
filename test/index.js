@@ -101,7 +101,7 @@ test('basic replication', async t => {
     // Create flag if the core is new given this
     // managers' context. Please clarify, how is it new given the context?
     // Disabling the create flag for now.
-    onresolve ({ namespace, key, create }, resolve) {
+    resolve ({ namespace, key, create }, resolve) {
       t.equal(namespace, 'default', 'Namespace is set')
       t.equal(typeof create, 'undefined', 'disabled')
       const feed = localStore.find(f => f.key.equals(key))
@@ -127,7 +127,7 @@ test('basic replication', async t => {
       else imLast = 'local'
     },
 
-    onresolve ({ namespace, key }, resolve) {
+    resolve ({ namespace, key }, resolve) {
       let feed = remoteStore.find(f => {
         return f.key.equals(key)
       })
@@ -211,7 +211,11 @@ test.skip('Basic: Live feed forwarding', t => {
   function setup (msg, cb) {
     const encryptionKey = Buffer.alloc(32)
     encryptionKey.write('forwarding is good')
-    const stack = new Decentstack(encryptionKey, { live: true })
+    const stack = new ReplicationManager(encryptionKey, {
+      onconnect: () => { },
+      onaccept: () => { },
+      onresolve: () => { }
+    }, { live: true })
     stack.once('error', t.error)
     const store = new ArrayStore(ram, hypercore, 1)
     stack.use(store, 'ArrayStore')

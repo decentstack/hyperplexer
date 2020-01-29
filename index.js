@@ -26,7 +26,7 @@ class ReplicationManager {
    * @param handlers.onauthenticate {funciton} - Signal-handshake authentication handler, control which peers to communicate with.
    * @param handlers.onconnect {function} - Invoked when a new peer connection is established.
    * @param handlers.ondisconnect {function} - Invoked when a peer connection is dropped
-   * @param handlers.onresolve {function} - Invoked when a key needs to be resolved to a feed.
+   * @param handlers.resolve {function} - Invoked when a key needs to be resolved to a feed.
    * @param handlers.onlistcores {function} - Invoked we need to discover available cores
    * // Misc handlers
    * @param handlers.onerror {function} - Handler for errors that occur on remotely initiated actions
@@ -56,7 +56,7 @@ class ReplicationManager {
       onconnect: handlers.onconnect,
       ondisconnect: handlers.ondisconnect,
       // Store handlers
-      onresolve: handlers.onresolve,
+      resolve: handlers.resolve,
       onlistcores: handlers.onlistcores,
       // Misc
       onerror: handlers.onerror || ((error, peer) => console.error('RemoteError caused by peer:', error, peer))
@@ -223,7 +223,7 @@ class ReplicationManager {
     let feed = this._resourceCache[key.toString()]
     if (feed) return feed
 
-    feed = await defer(done => this.handlers.onresolve({ namespace, key }, feed => {
+    feed = await defer(done => this.handlers.resolve({ namespace, key }, feed => {
       done(null, feed)
     }))
 
