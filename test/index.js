@@ -155,8 +155,8 @@ test('basic replication', async t => {
   }
 })
 
-test.only('Basic: Live feed forwarding', t => {
-  t.plan(13)
+test('Basic: Live feed forwarding', t => {
+  t.plan(10)
 
   setup('one', p1 => {
     setup('two', p2 => {
@@ -177,8 +177,8 @@ test.only('Basic: Live feed forwarding', t => {
                 t.equal(feed.key.toString('hex'), f3.key.toString('hex'), 'should see m3\'s writer')
                 t.equals(data.toString(), 'three', 'm3\'s writer should have been forwarded via m2')
                 p1.stack.close()
-                  .then(p2.stack.close)
-                  .then(p3.stack.close)
+                  .then(() => p2.stack.close())
+                  .then(() => p3.stack.close())
                   .then(() => {
                     t.pass('All 3 mgrs closed successfully')
                     t.end()
@@ -208,6 +208,10 @@ test.only('Basic: Live feed forwarding', t => {
     const stack = new ReplicationManager(encryptionKey, {
       onconnect: peer => store.toManifest(m => stack.share(peer, m)),
       onerror: t.error,
+      onforward: (namespace, key, candidates) => {
+        const m = [{ key, headers: { origin: 'dummy' } }]
+        for (const peer of candidates) stack.share(peer, m)
+      },
       resolve: ({ key }, resolve) => {
         let feed = store.find(f => f.key.equals(key))
         if (!feed) feed = store.create(key)

@@ -26,16 +26,14 @@ class ReplicationManager {
    * @param handlers.onauthenticate {funciton} - Signal-handshake authentication handler, control which peers to communicate with.
    * @param handlers.onconnect {function} - Invoked when a new peer connection is established.
    * @param handlers.ondisconnect {function} - Invoked when a peer connection is dropped
+   * @param handlers.onforward {function} - Invoked when new feed has unware peer candidates
    * @param handlers.resolve {function} - Invoked when a key needs to be resolved to a feed.
-   * @param handlers.onlistcores {function} - Invoked we need to discover available cores
    * // Misc handlers
    * @param handlers.onerror {function} - Handler for errors that occur on remotely initiated actions
    *
    * // Options
    * @param opts {Object} - Options
-   * @param opts.noautoshare - set to true to prevent automatic feed sharing on connect
-   * (remote shares will still be received). Use `share()` method to manually initate
-   * an offer
+   * @param opts.noforward - set to true to prevent automatic sharing of remotely discovered feeds to other connected peers
    */
   constructor (rpcChannelKey, handlers, opts) {
     this.opts = opts || {}
@@ -51,6 +49,7 @@ class ReplicationManager {
       // Replication control
       // onshare: handlers.onshare || (() => true),
       onaccept: handlers.onaccept || ((_, c) => c(true)),
+      onforward: handlers.onforward,
       // Peer control
       onauthenticate: handlers.onauthenticate,
       onconnect: handlers.onconnect,
@@ -130,11 +129,12 @@ class ReplicationManager {
 
   close (cb) {
     const p = defer(done => {
-      // TODO: Free up resources.
-      // 1. close connections
-      // 2. close/release feeds
-      // 3 ...
-      done()
+      for (const peer of this.peers) peer.kill()
+
+      Promise.all(
+        Object.values(this._resourceCache)
+          .map(feed => defer(d => feed.close(d)))
+      ).then(() => done())
     })
     return infer(p, cb)
   }
@@ -175,11 +175,33 @@ class ReplicationManager {
         accepted => {
           if (accepted) selected.push(feed.key)
           if (!--pending) {
+            // Send replicationRequest to remote
             accept(selected)
+
+            // Initiate replication assuming that remote will honor
+            // the offer.
             this._mapFeeds(snapshot.namespace, selected)
               .then(feeds => {
-                for (const key of feeds) {
-                  this._startFeedReplication(key, peer)
+                for (const feed of feeds) {
+                  this._startFeedReplication(feed, peer)
+
+                  // Attempt to find peers that are not aware of
+                  // this key in order to forward the share.
+                  const doForwardDetection = typeof this.handlers.onforward === 'function'
+                  if (doForwardDetection) {
+                    const hkey = feed.key.toString('hex')
+                    const unawarePeers = this.peers
+                      .filter(p =>
+                        p !== peer && // exclude current peer
+                        p.state === STATE_ACTIVE && // Is connected and active
+                        // Hasn't seen this key in any offer exchanges
+                        (!p.exchangeExt.offeredKeys[hkey] ||
+                        !p.exchangeExt.remoteOfferedKeys[hkey])
+                      )
+                    if (unawarePeers.length) {
+                      this.handlers.onforward(snapshot.namespace, feed.key, unawarePeers)
+                    }
+                  }
                 }
               })
               .catch(this.handlers.onerror)
