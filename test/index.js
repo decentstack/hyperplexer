@@ -54,7 +54,7 @@ const arraySourceFactory = (ra, coreFn, count = 3) => {
 
 // Horrible out of control test that needs to be clarified.
 test('basic replication', async t => {
-  t.plan(28)
+  t.plan(37)
   const encryptionKey = randomBytes(32)
   let imLast = false
 
@@ -88,16 +88,6 @@ test('basic replication', async t => {
       done()
     },
 
-    /* Remote dosen't invoke `share()` thus local end never triggers
-     * onaccept, conditions disabled for now.
-    onaccept ({ key, headers, peer, namespace }, accept) {
-      t.equal(namespace, 'default', 'onaccept Namespace is default')
-      t.ok(Buffer.isBuffer(key), 'Key is buffer')
-      t.equal(headers.origin, 'dummy', 'Origin header set')
-      debugger
-      accept(true)
-    }, */
-
     // Create flag if the core is new given this
     // managers' context. Please clarify, how is it new given the context?
     // Disabling the create flag for now.
@@ -125,6 +115,13 @@ test('basic replication', async t => {
       t.error(peer.lastError, 'No errors on remote conn state')
       if (imLast) finishUp()
       else imLast = 'local'
+    },
+
+    onaccept ({ key, headers, peer, namespace }, accept) {
+      t.equal(namespace, 'default', 'onaccept Namespace is default')
+      t.ok(Buffer.isBuffer(key), 'Key is buffer')
+      t.equal(headers.origin, 'dummy', 'Origin header set')
+      accept(true)
     },
 
     resolve ({ namespace, key }, resolve) {
@@ -211,15 +208,15 @@ test.skip('Basic: Live feed forwarding', t => {
   function setup (msg, cb) {
     const encryptionKey = Buffer.alloc(32)
     encryptionKey.write('forwarding is good')
+    const store = arraySourceFactory(ram, hypercore, 1)
     const stack = new ReplicationManager(encryptionKey, {
-      onconnect: () => { },
+      onconnect: peer => store.toManifest(m => stack.share(peer, m)),
       onaccept: () => { },
-      onresolve: () => { }
+      onresolve: () => { },
+      onerror: t.error
     }, { live: true })
-    stack.once('error', t.error)
-    const store = new ArrayStore(ram, hypercore, 1)
-    stack.use(store, 'ArrayStore')
-    const feed = store.feeds[0]
+
+    const feed = store[0]
     const ret = { stack, store, feed }
     feed.ready(() => {
       feed.append(msg, err => {
