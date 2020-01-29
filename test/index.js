@@ -42,12 +42,15 @@ const arraySourceFactory = (ra, coreFn, count = 3) => {
       })))
     })
   }
+
   a.create = key => {
     const l = a.length
     const f = coreFn(p => ra(l + p), key)
     a.push(f)
+    if (typeof a.oncreate === 'function') a.oncreate(f)
     return f
   }
+
   a.sumBlocks = () => a.reduce((s, f) => s + f.length, 0)
   return a
 }
@@ -125,9 +128,7 @@ test('basic replication', async t => {
     },
 
     resolve ({ namespace, key }, resolve) {
-      let feed = remoteStore.find(f => {
-        return f.key.equals(key)
-      })
+      let feed = remoteStore.find(f => f.key.equals(key))
       if (!feed) feed = remoteStore.create(key)
       t.ok(feed, 'feed found')
       feed.ready(() => resolve(feed))
@@ -154,48 +155,43 @@ test('basic replication', async t => {
   }
 })
 
-test.skip('Basic: Live feed forwarding', t => {
+test.only('Basic: Live feed forwarding', t => {
   t.plan(13)
+
   setup('one', p1 => {
     setup('two', p2 => {
       setup('three', p3 => {
         let feedsReplicated = 0
-        p1.store.on('feed', feed => {
+        p1.store.oncreate = feed => {
           feed.get(0, (err, data) => {
             t.error(err)
             switch (feedsReplicated++) {
               case 0: {
-                const f2 = p2.store.feeds[0]
+                const f2 = p2.store[0]
                 t.equal(feed.key.toString('hex'), f2.key.toString('hex'), 'should see m2\'s writer')
                 t.equals(data.toString(), 'two', 'm2\'s writer should have been replicated')
                 break
               }
               case 1: {
-                const f3 = p3.store.feeds[0]
+                const f3 = p3.store[0]
                 t.equal(feed.key.toString('hex'), f3.key.toString('hex'), 'should see m3\'s writer')
                 t.equals(data.toString(), 'three', 'm3\'s writer should have been forwarded via m2')
                 p1.stack.close()
-                p2.stack.close()
-                p3.stack.close()
+                  .then(p2.stack.close)
+                  .then(p3.stack.close)
+                  .then(() => {
+                    t.pass('All 3 mgrs closed successfully')
+                    t.end()
+                  })
+                  .catch(t.end)
                 break
               }
               default:
                 t.ok(false, 'Only expected to see 2 feed events, got: ' + feedsReplicated)
             }
           })
-        })
-        let pending = 3
-
-        const finishUp = err => {
-          t.error(err, `Stack gracefully closed #${pending}`)
-          if (--pending) return
-          t.pass('All 3 stacks closed')
-          t.end()
         }
 
-        p1.stack.once('close', finishUp)
-        p2.stack.once('close', finishUp)
-        p3.stack.once('close', finishUp)
         // stack1 and stack2 are now live connected.
         p1.stack.handleConnection(true, p2.stack.replicate(false))
 
@@ -211,9 +207,12 @@ test.skip('Basic: Live feed forwarding', t => {
     const store = arraySourceFactory(ram, hypercore, 1)
     const stack = new ReplicationManager(encryptionKey, {
       onconnect: peer => store.toManifest(m => stack.share(peer, m)),
-      onaccept: () => { },
-      onresolve: () => { },
-      onerror: t.error
+      onerror: t.error,
+      resolve: ({ key }, resolve) => {
+        let feed = store.find(f => f.key.equals(key))
+        if (!feed) feed = store.create(key)
+        feed.ready(() => resolve(feed))
+      }
     }, { live: true })
 
     const feed = store[0]
