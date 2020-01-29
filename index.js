@@ -35,7 +35,7 @@ class ReplicationManager {
    * @param opts {Object} - Options
    * @param opts.noforward - set to true to prevent automatic sharing of remotely discovered feeds to other connected peers
    */
-  constructor (rpcChannelKey, handlers, opts) {
+  constructor (rpcChannelKey, handlers = {}, opts) {
     this.opts = opts || {}
     this.rpcChannelKey = rpcChannelKey
     /*
@@ -44,7 +44,6 @@ class ReplicationManager {
       oncomplete: () => this.debug('ReplicationQueue flushed')
     })
     */
-
     this.handlers = {
       // Replication control
       // onshare: handlers.onshare || (() => true),
@@ -56,7 +55,6 @@ class ReplicationManager {
       ondisconnect: handlers.ondisconnect,
       // Store handlers
       resolve: handlers.resolve,
-      onlistcores: handlers.onlistcores,
       // Misc
       onerror: handlers.onerror || ((error, peer) => console.error('RemoteError caused by peer:', error, peer))
       // Not implemented / prototypes

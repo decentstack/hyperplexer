@@ -231,13 +231,18 @@ test('Basic: Live feed forwarding', t => {
   }
 })
 
-test.skip('Hypercore extensions support (local|global)', async t => {
+// TODO: switch to abstract-extension if needed, it's gonna increase
+// connection handshake time but will shave off a few bytes during extension
+// messaging. Don't know if tradeoffs are worth without further testing.
+// https://github.com/mafintosh/hypercore-protocol/blob/master/index.js#L7
+test.skip('Hypercore extensions support (local|global)', t => {
   t.plan(10)
   const encryptionKey = Buffer.alloc(32)
   encryptionKey.write('foo bars')
 
-  const stack = new Decentstack(encryptionKey)
-  stack.once('error', t.error)
+  const stack = new ReplicationManager(encryptionKey, {
+    onerror: t.error
+  })
 
   const conn = new PeerConnection(true, encryptionKey, {
     live: true,
