@@ -5,7 +5,7 @@
  */
 const assert = require('assert')
 const PeerConnection = require('./lib/peer-connection')
-const { defer } = require('deferinfer')
+const { defer, infer } = require('deferinfer')
 const debug = require('debug')('@decentstack/replmgr')
 const {
   STATE_ACTIVE,
@@ -128,6 +128,17 @@ class ReplicationManager {
     peer.sendManifest(namespace, feeds, cb)
   }
 
+  close (cb) {
+    const p = defer(done => {
+      // TODO: Free up resources.
+      // 1. close connections
+      // 2. close/release feeds
+      // 3 ...
+      done()
+    })
+    return infer(p, cb)
+  }
+
   // Create an exchange stream
   _newExchangeStream (initiator, opts = {}) {
     const mergedOpts = Object.assign(
@@ -143,7 +154,7 @@ class ReplicationManager {
         onstatechange: this._onPeerStateChanged,
         // onreplicating: (...args) => this._emit('onreplicating', peer, ...args),
         onextension: this._onUnhandeledExtension,
-        onauthenticate: (...auth) => this._emit('onauthenticate', peer, ...auth)
+        onauthenticate: this.handlers.onauthenticate ? (...auth) => this._emit('onauthenticate', ...auth, peer) : null
       }
     )
     const peer = new PeerConnection(initiator, this.rpcChannelKey, mergedOpts)
