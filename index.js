@@ -165,6 +165,9 @@ class ReplicationManager {
     const selected = []
 
     for (const feed of snapshot.feeds) {
+      // Skip already replicating feeds.
+      if (peer.isActive(feed.key)) continue
+      // Otherwise query handler
       this._isResourceAllowed(
         snapshot.namespace,
         feed.key,
@@ -180,8 +183,11 @@ class ReplicationManager {
             // the offer.
             this._mapFeeds(snapshot.namespace, selected)
               .then(feeds => {
+                const promises = []
                 for (const feed of feeds) {
-                  this._startFeedReplication(feed, peer)
+                  if (!peer.isActive(feed.key)) {
+                    promises.push(this._startFeedReplication(feed, peer))
+                  }
 
                   // Attempt to find peers that are not aware of
                   // this key in order to forward the share.
@@ -201,6 +207,7 @@ class ReplicationManager {
                     }
                   }
                 }
+                return Promise.all(promises)
               })
               .catch(this.handlers.onerror)
           }
@@ -280,7 +287,9 @@ class ReplicationManager {
     this._mapFeeds(namespace, keys.filter(k => offered[k.toString('hex')]))
       .then(feeds => {
         for (const feed of feeds) {
+          if (peer.isActive(feed.key)) continue
           this._startFeedReplication(feed, peer)
+            .catch(this.handlers.onerror)
         }
       })
       .catch(this.handlers.onerror)
