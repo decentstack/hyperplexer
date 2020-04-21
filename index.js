@@ -6,7 +6,7 @@
 const assert = require('assert')
 const PeerConnection = require('./lib/peer-connection')
 const { defer, infer } = require('deferinfer')
-const debug = require('debug')('@decentstack/replmgr')
+const debug = require('debug')('decentstack/repl/mgr')
 const {
   STATE_ACTIVE,
   STATE_DEAD
@@ -23,7 +23,7 @@ class ReplicationManager {
    * @param handlers {Object} - handlers object that allows you to control and interact with the manager.
    * @param handlers.onshare {function} - Control what you share. Invoked for each feed before manifest is sent to a peer.
    * @param handlers.onaccept {function} - Control what you accept. Invoked when receiving a manifest from a peer
-   * @param handlers.onauthenticate {funciton} - Signal-handshake authentication handler, control which peers to communicate with.
+   * @param handlers.onauthenticate {function} - Signal-handshake authentication handler, control which peers to communicate with.
    * @param handlers.onconnect {function} - Invoked when a new peer connection is established.
    * @param handlers.ondisconnect {function} - Invoked when a peer connection is dropped
    * @param handlers.onforward {function} - Invoked when new feed has unware peer candidates
@@ -34,9 +34,10 @@ class ReplicationManager {
    * // Options
    * @param opts {Object} - Options
    * @param opts.noforward - set to true to prevent automatic sharing of remotely discovered feeds to other connected peers
+   * @param opts.live - set to true to keep connection open. (should be default?)
    */
   constructor (rpcChannelKey, handlers = {}, opts) {
-    this.opts = opts || {}
+    this.protocolOpts = opts || {}
     this.rpcChannelKey = rpcChannelKey
     /*
     this.queue = new NanoQueue(opts.activeLimit || 50, {
@@ -67,8 +68,11 @@ class ReplicationManager {
     this._onPeerStateChanged = this._onPeerStateChanged.bind(this)
     this._onManifestReceived = this._onManifestReceived.bind(this)
     this._onReplicateRequest = this._onReplicateRequest.bind(this)
+    this._closed = false
+    this._closing = false
     // this._onFeedReplicated = this._onFeedReplicated.bind(this)
     // this._onUnhandeledExtension = this._onUnhandeledExtension.bind(this)
+    this.stats = { started: 0, done: 0 }
   }
 
   /**
@@ -79,6 +83,7 @@ class ReplicationManager {
    * @param opts {Object} - override peer or hpercore-protocol options for this connection.
    */
   handleConnection (initiator, stream, opts = {}) {
+    if (this._closed) throw new Error('Closed')
     assert(typeof initiator === 'boolean', 'Initiator must be a boolean')
     if (stream && typeof stream.pipe !== 'function') return this.handleConnection(initiator, null, stream)
     const conn = this._newExchangeStream(initiator, opts)
@@ -121,19 +126,24 @@ class ReplicationManager {
       }
       if (typeof opts.ondone === 'function') opts.ondone(err, selectedFeeds)
     }
-
     peer.sendManifest(namespace, feeds, cb)
   }
 
-  close (cb) {
-    const p = defer(done => {
-      for (const peer of this.peers) peer.kill()
+  get closed () { return this._closed }
 
-      Promise.all(
-        Object.values(this._resourceCache)
-          .map(feed => defer(d => feed.close(d)))
-      ).then(() => done())
-    })
+  close (cb) {
+    this._closing = true
+    this._closed = true
+    // disconnect all peers
+    for (const peer of this.peers) peer.kill()
+
+    // release all open feeds
+    const p = Promise.all(
+      Object.values(this._resourceCache)
+        .map(feed => defer(d => feed.close(d)))
+    )
+      .then(() => { this._closing = false })
+
     return infer(p, cb)
   }
 
@@ -164,6 +174,43 @@ class ReplicationManager {
     let pending = snapshot.feeds.length
     const selected = []
 
+    const whenSelectionDone = () => {
+      // Send replicationRequest to remote
+      accept(selected)
+
+      // Initiate replication assuming that remote will honor
+      // the offer.
+      this._mapFeeds(snapshot.namespace, selected)
+        .then(feeds => {
+          const promises = []
+          for (const feed of feeds) {
+            if (!peer.isActive(feed.key)) {
+              promises.push(this._startFeedReplication(feed, peer))
+            }
+
+            // Attempt to find peers that are not aware of
+            // this key in order to forward the share.
+            const doForwardDetection = typeof this.handlers.onforward === 'function'
+            if (doForwardDetection) {
+              const hkey = feed.key.toString('hex')
+              const unawarePeers = this.peers
+                .filter(p =>
+                  p !== peer && // exclude current peer
+                  p.state === STATE_ACTIVE && // Is connected and active
+                  // Hasn't seen this key in any offer exchanges
+                  (!p.exchangeExt.offeredKeys[hkey] ||
+                    !p.exchangeExt.remoteOfferedKeys[hkey])
+                )
+              if (unawarePeers.length) {
+                this.handlers.onforward(snapshot.namespace, feed.key, unawarePeers)
+              }
+            }
+          }
+          return Promise.all(promises)
+        })
+        .catch(this.handlers.onerror)
+    }
+
     for (const feed of snapshot.feeds) {
       // Skip already replicating feeds.
       if (peer.isActive(feed.key)) continue
@@ -175,43 +222,9 @@ class ReplicationManager {
         peer,
         accepted => {
           if (accepted) selected.push(feed.key)
-          if (!--pending) {
-            // Send replicationRequest to remote
-            accept(selected)
-
-            // Initiate replication assuming that remote will honor
-            // the offer.
-            this._mapFeeds(snapshot.namespace, selected)
-              .then(feeds => {
-                const promises = []
-                for (const feed of feeds) {
-                  if (!peer.isActive(feed.key)) {
-                    promises.push(this._startFeedReplication(feed, peer))
-                  }
-
-                  // Attempt to find peers that are not aware of
-                  // this key in order to forward the share.
-                  const doForwardDetection = typeof this.handlers.onforward === 'function'
-                  if (doForwardDetection) {
-                    const hkey = feed.key.toString('hex')
-                    const unawarePeers = this.peers
-                      .filter(p =>
-                        p !== peer && // exclude current peer
-                        p.state === STATE_ACTIVE && // Is connected and active
-                        // Hasn't seen this key in any offer exchanges
-                        (!p.exchangeExt.offeredKeys[hkey] ||
-                        !p.exchangeExt.remoteOfferedKeys[hkey])
-                      )
-                    if (unawarePeers.length) {
-                      this.handlers.onforward(snapshot.namespace, feed.key, unawarePeers)
-                    }
-                  }
-                }
-                return Promise.all(promises)
-              })
-              .catch(this.handlers.onerror)
-          }
-        })
+          if (!--pending) whenSelectionDone()
+        }
+      )
     }
   }
 
@@ -227,34 +240,30 @@ class ReplicationManager {
   }
 
   _startFeedReplication (feed, peer) {
+    this.stats.started++
     return peer.replicateCore(feed)
       .then(r => {
         // Replication done?
         // debugger
+        this.stats.done++
+        return r
       })
-      .catch(this.handlers.onerror)
   }
 
-
   // Synchroneous feed mapper
-  async _mapFeeds (namespace, keys) {
-    const feeds = []
-    for (const key of keys) {
-      const f = await this._resolveResource(namespace, key)
-      feeds.push(f)
-    }
-    return feeds
+  _mapFeeds (namespace, keys) {
+    return Promise.all(keys.map(key => this._resolveResource(namespace, key)))
   }
 
   async _resolveResource (namespace, key) {
-    let feed = this._resourceCache[key.toString()]
+    let feed = this._resourceCache[key.toString('hex')] // TODO: bug, namespace ignored!
     if (feed) return feed
 
     feed = await defer(done => this.handlers.resolve({ namespace, key }, feed => {
       done(null, feed)
     }))
 
-    this._resourceCache[key.toString()] = feed
+    this._resourceCache[key.toString('hex')] = feed
     await defer(done => feed.ready(done))
     if (!key.equals(feed.key)) throw new Error(`Resolved key mismatch: ${key.toString('hex')} !== ${feed.key.toString('hex')}`)
     return feed

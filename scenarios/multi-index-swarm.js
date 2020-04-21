@@ -1,9 +1,9 @@
-const HyperSim = require('..')
+const HyperSim = require('hyper-simulator')
 // const hypercore = require('hypercore')
 const { defer } = require('deferinfer')
 
 const { randomBytes } = require('crypto')
-const { ReplicationManager } = require('../../replication-manager')
+const { ReplicationManager } = require('..')
 const Corestore = require('corestore')
 /*
  * Topics represented as an integer between 0 and 5

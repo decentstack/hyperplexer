@@ -1,5 +1,5 @@
 {
-  "name": "@decentstack/replication-manager",
+  "name": "hyperplexer",
   "version": "0.0.1",
   "description": "Fast and efficient replication-manager for hypercores",
   "main": "index.js",
@@ -13,7 +13,7 @@
     "debug": "node inspect $(npm bin)/tape test/",
     "lint": "standard",
     "prepublishOnly": "npm test",
-    "bench": "node bench/index.js"
+    "bench": "node $(npm bin)/hypersim -T -o swarm-log.json scenarios/multi-index-swarm.js"
   },
   "dependencies": {
     "deferinfer": "^1.0.1",
@@ -21,19 +21,20 @@
     "exchange-protocol": "^4.0.0",
     "hypercore-protocol": "^7.7.1",
     "hypercore-substream": "^3.0.1",
-    "jsdoc": "^3.6.3",
     "nanoqueue": "^1.0.0",
     "pretty-hash": "^1.0.1",
     "pump": "^3.0.0",
     "xxhashjs": "^0.2.2"
   },
   "devDependencies": {
+    "corestore": "^5.0.8",
+    "jsdoc": "^3.6.3",
     "fast-fifo": "^1.0.0",
+    "hyper-simulator": "^1.0.2",
     "hypercore": "^8.4.0",
     "random-access-file": "^2.1.3",
     "random-access-memory": "^3.1.1",
     "standard": "^14.3.1",
-    "streamx": "^2.5.0",
     "tape": "^4.11.0"
   },
   "repository": {
