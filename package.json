@@ -1,7 +1,7 @@
 {
   "name": "hyperplexer",
   "version": "0.0.1",
-  "description": "Fast and efficient replication-manager for hypercores",
+  "description": "🐙 hypercore multiplexer and replication manager",
   "main": "index.js",
   "files": [
     "lib",
@@ -39,10 +39,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/telamon/@decentstack/replication-manager.git"
+    "url": "git+https://github.com/decentstack/hyperplexer.git"
   },
   "keywords": [
     "hypercore",
+    "multiplex",
+    "feed",
     "replication",
     "manager",
     "multifeed"
